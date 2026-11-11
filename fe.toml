@@ -1,0 +1,7 @@
+[ingot]
+name = "fekitty"
+version = "0.1.0"
+license = "MIT"
+description = "Trustless, goal-based community money pots (kitties) written in Fe 26.5"
+
+[dependencies]
