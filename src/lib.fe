@@ -1,0 +1,481 @@
+/// FeKitty — Trustless Community Money Pots ("İmece Kutusu") in Fe 26.5
+///
+/// Built for the Fe Builders Challenge 2026 (https://fe-lang.org/contest/)
+/// Live Demo: https://cukka.org
+///
+/// Key Fe 26.5 Features Demonstrated:
+/// 1. Explicit Effects (`uses (ctx, mut store, mut log, mut call)`)
+/// 2. Typed ETH Amounts (`wei(...)`) & Timestamp Validation
+/// 3. Tuple Structs (`struct ProgressSnapshot(u256, u256)`)
+/// 4. Closures (`|raised: u256| -> u256 { ... }`)
+/// 5. Traits & Pattern Matching (`trait Validate`, `Result<KittyError, u256>`)
+/// 6. Built-in EVM Unit Tests (`#[test]` & `#[test(should_revert)]`)
+
+use std::abi::sol
+use std::evm::{Address, Call, Ctx, Log, StorageMap, wei}
+use core::num::mul_div
+
+// ============================================================================
+// 1. Domain Errors & Validation Traits
+// ============================================================================
+
+pub enum KittyError {
+    ZeroGoal,
+    ZeroAmount,
+    InvalidDeadline,
+    DeadlineExpired,
+    DeadlineNotExpired,
+    GoalNotReached,
+    GoalAlreadyReached,
+    AlreadySettled,
+    NothingToRefund,
+}
+
+pub trait Validate {
+    fn validate(self) -> Result<KittyError, u256>
+}
+
+/// Tuple struct (Fe 26.5 feature) capturing `(raised, goal)` for fast progress checks
+pub struct ProgressSnapshot(pub u256, pub u256)
+
+/// Validates an incoming contribution against kitty rules
+pub struct ContributionRequest {
+    pub amount: u256,
+    pub current_time: u256,
+    pub deadline: u256,
+    pub settled: bool,
+}
+
+impl Validate for ContributionRequest {
+    fn validate(self) -> Result<KittyError, u256> {
+        if self.settled {
+            return Result::Err(KittyError::AlreadySettled)
+        }
+        if self.amount == 0 {
+            return Result::Err(KittyError::ZeroAmount)
+        }
+        if self.current_time >= self.deadline {
+            return Result::Err(KittyError::DeadlineExpired)
+        }
+        Result::Ok(self.amount)
+    }
+}
+
+/// Validates a release request when transferring pooled funds to the recipient
+pub struct ReleaseRequest {
+    pub total_raised: u256,
+    pub goal: u256,
+    pub settled: bool,
+}
+
+impl Validate for ReleaseRequest {
+    fn validate(self) -> Result<KittyError, u256> {
+        if self.settled {
+            return Result::Err(KittyError::AlreadySettled)
+        }
+        if self.total_raised < self.goal {
+            return Result::Err(KittyError::GoalNotReached)
+        }
+        Result::Ok(self.total_raised)
+    }
+}
+
+/// Validates a contributor refund request after a missed deadline
+pub struct RefundRequest {
+    pub contributed: u256,
+    pub total_raised: u256,
+    pub goal: u256,
+    pub current_time: u256,
+    pub deadline: u256,
+    pub settled: bool,
+}
+
+impl Validate for RefundRequest {
+    fn validate(self) -> Result<KittyError, u256> {
+        if self.settled {
+            return Result::Err(KittyError::AlreadySettled)
+        }
+        if self.current_time < self.deadline {
+            return Result::Err(KittyError::DeadlineNotExpired)
+        }
+        if self.total_raised >= self.goal {
+            return Result::Err(KittyError::GoalAlreadyReached)
+        }
+        if self.contributed == 0 {
+            return Result::Err(KittyError::NothingToRefund)
+        }
+        Result::Ok(self.contributed)
+    }
+}
+
+// ============================================================================
+// 2. Pure Calculation Helpers (Closures & Tuple Structs)
+// ============================================================================
+
+/// Uses a Fe 26.5 closure and tuple struct to calculate remaining wei needed
+/// and basis-points progress (0..10000).
+pub fn evaluate_progress(snapshot: ProgressSnapshot) -> (u256, u256) {
+    let ProgressSnapshot(raised, goal) = snapshot
+    assert!(goal > 0, "goal must be positive")
+
+    // Fe 26.5 Closure capturing `goal` from surrounding environment
+    let remaining_needed = |current: u256| -> u256 {
+        if current >= goal {
+            return 0
+        }
+        return goal - current
+    }
+
+    let rem = remaining_needed(raised)
+    let bps = if raised >= goal {
+        10000
+    } else {
+        mul_div(raised, 10000, goal)
+    }
+
+    (rem, bps)
+}
+
+/// Verifies that a contribution is valid and returns the updated kitty total
+pub fn apply_contribution(
+    current_total: u256,
+    amount: u256,
+    current_time: u256,
+    deadline: u256,
+    settled: bool,
+) -> u256 {
+    assert!(!settled, "kitty already settled")
+    assert!(amount > 0, "zero contribution")
+    assert!(current_time < deadline, "deadline passed")
+    current_total + amount
+}
+
+/// Verifies that a refund is valid and returns the refundable amount
+pub fn verify_refund(
+    contributed: u256,
+    total_raised: u256,
+    goal: u256,
+    current_time: u256,
+    deadline: u256,
+    settled: bool,
+) -> u256 {
+    assert!(!settled, "kitty already settled")
+    assert!(current_time >= deadline, "deadline not yet expired")
+    assert!(total_raised < goal, "goal was reached; cannot refund")
+    assert!(contributed > 0, "nothing to refund")
+    contributed
+}
+
+// ============================================================================
+// 3. Events
+// ============================================================================
+
+#[event]
+pub struct KittyInitialized {
+    #[indexed]
+    pub recipient: Address,
+    pub goal: u256,
+    pub deadline: u256,
+}
+
+#[event]
+pub struct Contributed {
+    #[indexed]
+    pub contributor: Address,
+    pub amount: u256,
+    pub new_total: u256,
+    pub receipt_tag: u256,
+}
+
+#[event]
+pub struct KittyReleased {
+    #[indexed]
+    pub recipient: Address,
+    pub total_released: u256,
+}
+
+#[event]
+pub struct RefundClaimed {
+    #[indexed]
+    pub contributor: Address,
+    pub amount: u256,
+}
+
+// ============================================================================
+// 4. Contract Storage & Message Interface (ABI)
+// ============================================================================
+
+pub struct KittyStore {
+    pub recipient: Address,
+    pub goal: u256,
+    pub deadline: u256,
+    pub total_raised: u256,
+    pub settled: bool,
+    pub contributions: StorageMap<Address, u256>,
+}
+
+msg FeKittyMsg {
+    #[selector = sol("initializeClone(address,uint256,uint256)")]
+    InitializeClone {
+        recipient: Address,
+        goal: u256,
+        deadline: u256,
+    },
+
+    #[selector = sol("contribute(uint256)")]
+    #[payable]
+    Contribute { receipt_tag: u256 },
+
+    #[selector = sol("release()")]
+    Release {},
+
+    #[selector = sol("claimRefund()")]
+    ClaimRefund {},
+
+    #[selector = sol("getProgress()")]
+    GetProgress {} -> (u256, u256, u256, bool),
+
+    #[selector = sol("getContribution(address)")]
+    GetContribution { contributor: Address } -> u256,
+}
+
+// ============================================================================
+// 5. Main Smart Contract: FeKitty
+// ============================================================================
+
+pub contract FeKitty uses (ctx: Ctx, log: mut Log, call: mut Call) {
+    mut store: KittyStore
+
+    init(recipient: Address, goal: u256, deadline: u256) uses (ctx, mut store, mut log) {
+        assert!(goal > 0, "goal must be greater than zero")
+        assert!(deadline > ctx.timestamp(), "deadline must be in the future")
+
+        store.recipient = recipient
+        store.goal = goal
+        store.deadline = deadline
+        store.total_raised = 0
+        store.settled = false
+
+        log.emit(KittyInitialized {
+            recipient,
+            goal,
+            deadline,
+        })
+    }
+
+    recv FeKittyMsg {
+        InitializeClone {
+            recipient,
+            goal,
+            deadline,
+        } uses (ctx, mut store, mut log) {
+            // Allows ERC-1167 minimal proxy clones (std::evm::clones) to initialize storage once
+            assert!(store.goal == 0, "kitty clone already initialized")
+            assert!(goal > 0, "goal must be greater than zero")
+            assert!(deadline > ctx.timestamp(), "deadline must be in the future")
+
+            store.recipient = recipient
+            store.goal = goal
+            store.deadline = deadline
+            store.total_raised = 0
+            store.settled = false
+
+            log.emit(KittyInitialized {
+                recipient,
+                goal,
+                deadline,
+            })
+        }
+
+        Contribute { receipt_tag } uses (ctx, mut store, mut log) {
+            let caller = ctx.caller()
+            let amount = ctx.value()
+
+            let req = ContributionRequest {
+                amount,
+                current_time: ctx.timestamp(),
+                deadline: store.deadline,
+                settled: store.settled,
+            }
+
+            match req.validate() {
+                Result::Ok(valid_amount) => {
+                    let prev = store.contributions.get(key: caller)
+                    store.contributions.set(key: caller, value: prev + valid_amount)
+
+                    let updated_total = store.total_raised + valid_amount
+                    store.total_raised = updated_total
+
+                    log.emit(Contributed {
+                        contributor: caller,
+                        amount: valid_amount,
+                        new_total: updated_total,
+                        receipt_tag,
+                    })
+                }
+                Result::Err(_) => {
+                    assert!(false, "invalid contribution")
+                }
+            }
+        }
+
+        Release {} uses (ctx, mut store, mut log, mut call) {
+            let req = ReleaseRequest {
+                total_raised: store.total_raised,
+                goal: store.goal,
+                settled: store.settled,
+            }
+
+            match req.validate() {
+                Result::Ok(payout) => {
+                    // Checks-Effects-Interactions pattern (ETHSkills Security Standard)
+                    store.settled = true
+                    let recipient = store.recipient
+
+                    let outcome = call.send_value(
+                        addr: recipient,
+                        gas: ctx.gas(),
+                        value: wei(payout),
+                    )
+                    assert!(outcome.success(), "payout transfer failed")
+
+                    log.emit(KittyReleased {
+                        recipient,
+                        total_released: payout,
+                    })
+                }
+                Result::Err(_) => {
+                    assert!(false, "cannot release kitty yet")
+                }
+            }
+        }
+
+        ClaimRefund {} uses (ctx, mut store, mut log, mut call) {
+            let caller = ctx.caller()
+            let contributed = store.contributions.get(key: caller)
+
+            let req = RefundRequest {
+                contributed,
+                total_raised: store.total_raised,
+                goal: store.goal,
+                current_time: ctx.timestamp(),
+                deadline: store.deadline,
+                settled: store.settled,
+            }
+
+            match req.validate() {
+                Result::Ok(refund_amount) => {
+                    // Zero out contributor balance BEFORE external call (Reentrancy guard)
+                    store.contributions.set(key: caller, value: 0)
+
+                    let outcome = call.send_value(
+                        addr: caller,
+                        gas: ctx.gas(),
+                        value: wei(refund_amount),
+                    )
+                    assert!(outcome.success(), "refund transfer failed")
+
+                    log.emit(RefundClaimed {
+                        contributor: caller,
+                        amount: refund_amount,
+                    })
+                }
+                Result::Err(_) => {
+                    assert!(false, "refund not eligible")
+                }
+            }
+        }
+
+        GetProgress {} -> (u256, u256, u256, bool) uses (store) {
+            let (remaining, bps) = evaluate_progress(
+                snapshot: ProgressSnapshot(store.total_raised, store.goal),
+            )
+            (store.total_raised, remaining, bps, store.settled)
+        }
+
+        GetContribution { contributor } -> u256 uses (store) {
+            store.contributions.get(key: contributor)
+        }
+    }
+}
+
+// ============================================================================
+// 6. Automated Unit Tests (`fe test`)
+// ============================================================================
+
+#[test]
+fn test_progress_calculation_with_closure_and_tuple_struct() {
+    // 2.5 ETH raised out of 5 ETH goal -> 2.5 ETH remaining, 5000 bps (50%)
+    let snap = ProgressSnapshot(250, 500)
+    let (rem, bps) = evaluate_progress(snapshot: snap)
+    assert!(rem == 250)
+    assert!(bps == 5000)
+}
+
+#[test]
+fn test_progress_caps_when_goal_exceeded() {
+    // 600 raised out of 500 goal -> 0 remaining, 10000 bps (100%)
+    let snap = ProgressSnapshot(600, 500)
+    let (rem, bps) = evaluate_progress(snapshot: snap)
+    assert!(rem == 0)
+    assert!(bps == 10000)
+}
+
+#[test]
+fn test_valid_contribution_accumulates() {
+    let new_total = apply_contribution(
+        current_total: 100,
+        amount: 50,
+        current_time: 1000,
+        deadline: 2000,
+        settled: false,
+    )
+    assert!(new_total == 150)
+}
+
+#[test(should_revert)]
+fn test_rejects_zero_contribution() {
+    let _ = apply_contribution(
+        current_total: 100,
+        amount: 0,
+        current_time: 1000,
+        deadline: 2000,
+        settled: false,
+    )
+}
+
+#[test(should_revert)]
+fn test_rejects_contribution_after_deadline() {
+    let _ = apply_contribution(
+        current_total: 100,
+        amount: 50,
+        current_time: 2000,
+        deadline: 2000,
+        settled: false,
+    )
+}
+
+#[test]
+fn test_refund_succeeds_after_missed_deadline() {
+    let refund = verify_refund(
+        contributed: 75,
+        total_raised: 300,
+        goal: 500,
+        current_time: 2500,
+        deadline: 2000,
+        settled: false,
+    )
+    assert!(refund == 75)
+}
+
+#[test(should_revert)]
+fn test_rejects_refund_when_goal_reached() {
+    let _ = verify_refund(
+        contributed: 75,
+        total_raised: 500,
+        goal: 500,
+        current_time: 2500,
+        deadline: 2000,
+        settled: false,
+    )
+}
