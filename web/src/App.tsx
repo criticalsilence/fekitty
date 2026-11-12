@@ -285,8 +285,8 @@ namespace styles {
   })
   export const pillsBar = style({
     display: 'flex',
+    flexWrap: 'wrap',
     gap: '8px',
-    overflowX: 'auto',
     marginBottom: tokens.spacing.md,
   })
   export const pillTab = style({
