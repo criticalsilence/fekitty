@@ -1,4 +1,4 @@
-# FeKitty 🐾
+# FeKitty
 
 > **One-Sentence Pitch:** Trustless, goal-based community money pots ("kitties") written in **Fe 26.5** where pooled funds automatically release to a pre-locked recipient when the target is met, or refund 100% to contributors if the deadline expires.
 
@@ -9,7 +9,7 @@
 
 ---
 
-## 🧪 Testnet & Free Sepolia ETH Faucets
+## Testnet & Free Sepolia ETH Faucets
 
 The live web app at **[https://cukka.org/fekitty/](https://cukka.org/fekitty/)** automatically switches connected wallets to **Ethereum Sepolia Testnet (`chainId: 11155111` / `0xaa36a7`)** so you never risk real Mainnet funds.
 
@@ -28,7 +28,7 @@ Whenever neighbors pool money for an apartment roof repair, friends split a grou
 2. **Missed-Goal Awkwardness:** If the target amount is not reached by the deadline, manually returning everyone's exact share is tedious and error-prone.
 3. **Recipient Verification:** Contributors want a cryptographic guarantee that once the target is met, the funds can *only* go to the designated vet clinic, repair contractor, or vendor.
 
-**FeKitty** solves this everyday human coordination problem with a single, minimal smart contract written in **Fe 26.5** paired with a zero-jargon web interface.
+**FeKitty** solves this everyday human coordination problem with a single, minimal smart contract written in **Fe 26.5** paired with a zero-build, single-file **"Neighborhood Receipt"** web interface (`index.html`).
 
 ---
 
@@ -80,6 +80,8 @@ pub fn evaluate_progress(snapshot: ProgressSnapshot) -> (u256, u256) {
    - Follows the **Checks-Effects-Interactions (CEI)** pattern (`store.settled = true` before `call.send_value(addr: recipient, gas: ctx.gas(), value: wei(payout))`).
 4. **100% Safety Refund (`ClaimRefund {}`):**
    - If `ctx.timestamp() >= deadline` and `total_raised < goal`, contributors reclaim their exact deposit (`wei(refund_amount)`).
+5. **Neighborhood Receipt Frontend ([`index.html`](./index.html)):**
+   - Designed as a tactile neighborhood thermal receipt with a 20-cell punch card (live contribution preview), dotted-leader ledger rows, rotated status stamps, and a deterministic SVG barcode generated directly from the locked `recipientAddress`.
 
 ---
 
@@ -97,14 +99,8 @@ FeKitty includes 7 built-in unit and revert tests in [`src/lib.fe`](./src/lib.fe
 fe test
 ```
 
-### Run Web Interface (`web/` or standalone `index.html`)
-- **Zero-Build Static Demo:** Open [`index.html`](./index.html) directly in any browser or host on GitHub Pages / `cukka.org`.
-- **Vite + React + Zyzz (`zyzz.style`) Build:**
-  ```bash
-  cd web
-  npm install
-  npm run dev
-  ```
+### Run Web Interface ([`index.html`](./index.html))
+- **Zero-Build Static App:** Open [`index.html`](./index.html) directly in any desktop or mobile browser, or visit the live deployment at **[https://cukka.org/fekitty/](https://cukka.org/fekitty/)**.
 
 ---
 
@@ -118,9 +114,8 @@ fe test
 
 ## 6. Disclosures (Pre-Existing Work, Ecosystem Resources & AI Assistance)
 
-- **Newly Written for the Fe Builders Challenge:** All Fe smart contract code ([`src/lib.fe`](./src/lib.fe)), frontend components ([`web/src/App.tsx`](./web/src/App.tsx), [`index.html`](./index.html)), and skill specs ([`skills/SKILL.md`](./skills/SKILL.md)) were created from scratch during the challenge window (Nov 2026).
-- **Ecosystem Standards & Libraries Used:**
-  - **[Zyzz (`zyzz.style`)](https://zyzz.style/):** Typed styling and design tokens in `web/`.
-  - **[ETHSkills (`ethskills.com`)](https://ethskills.com/):** Security guardrails (CEI pattern) and 4-step wallet UX structure.
-  - **[x402 (`x402.org`)](https://x402.org/):** HTTP 402 `PAYMENT-SIGNATURE` receipt tag integration for 1-click contributions.
-- **AI Assistance Disclosure:** Built with AI pair-programming assistance (Google Antigravity) for Fe 26.5 syntax exploration, unit test scaffolding, and UI prototyping, reviewed and directed by `@criticalsilence`.
+- **Newly Written for the Fe Builders Challenge:** All Fe smart contract code ([`src/lib.fe`](./src/lib.fe)), the zero-build neighborhood receipt frontend ([`index.html`](./index.html)), and skill specs ([`skills/SKILL.md`](./skills/SKILL.md)) were created from scratch during the challenge window (Nov 2026).
+- **Ecosystem Standards Used:**
+  - **[ETHSkills (`ethskills.com`)](https://ethskills.com/):** Security guardrails (CEI pattern, typed `wei` units) and wallet UX structure.
+  - **[x402 (`x402.org`)](https://x402.org/):** HTTP 402 `PAYMENT-SIGNATURE` receipt tag integration for 1-tap contributions.
+- **AI Assistance Disclosure:** Built with AI pair-programming assistance (Google Antigravity) for Fe 26.5 syntax exploration, unit test scaffolding, and UI implementation, reviewed and directed by `@criticalsilence`.
