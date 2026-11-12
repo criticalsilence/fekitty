@@ -3,9 +3,21 @@
 > **One-Sentence Pitch:** Trustless, goal-based community money pots ("kitties") written in **Fe 26.5** where pooled funds automatically release to a pre-locked recipient when the target is met, or refund 100% to contributors if the deadline expires.
 
 - **Contest:** [Fe Builders Challenge 2026](https://fe-lang.org/contest/)
-- **Live Interactive Demo:** [https://cukka.org/fekitty/](https://cukka.org/fekitty/)
+- **Live Interactive Demo (Sepolia Testnet):** [https://cukka.org/fekitty/](https://cukka.org/fekitty/)
 - **Author:** [@criticalsilence](https://github.com/criticalsilence)
 - **License:** [MIT](./LICENSE)
+
+---
+
+## 🧪 Testnet & Free Sepolia ETH Faucets
+
+The live web app at **[https://cukka.org/fekitty/](https://cukka.org/fekitty/)** automatically switches connected wallets to **Ethereum Sepolia Testnet (`chainId: 11155111` / `0xaa36a7`)** so you never risk real Mainnet funds.
+
+You can grab free Sepolia Testnet ETH from any of these faucets:
+- **[Google Cloud Web3 Sepolia Faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia)** *(No minimum balance required)*
+- **[Alchemy Sepolia Faucet](https://www.alchemy.com/faucets/ethereum-sepolia)**
+- **[Chainlink Sepolia Faucet](https://faucets.chain.link/sepolia)**
+- **[Sepolia PoW Faucet](https://sepolia-faucet.pk910.de/)**
 
 ---
 
